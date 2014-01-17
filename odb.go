@@ -2,9 +2,13 @@
 package odb
 
 import (
-	"errors"
 	"fmt"
 	"github.com/PuerkitoBio/goquery"
+	"github.com/saintfish/brave"
+	"net/http"
+	"regexp"
+	"strconv"
+	"strings"
 )
 
 // The metadata of a odb page
@@ -13,9 +17,10 @@ type Post struct {
 	Url              string
 	Title            string
 	BibleVerse       string
+	BibleReference   []brave.Reference
 	GoldenVerse      string
 	Passages         []string
-	Poem             string
+	Poem             []string
 	Thought          string
 }
 
@@ -37,29 +42,51 @@ var languageDomainMap = map[Language]string{
 // Odb represents an odb website accessor
 type Odb struct {
 	domain string
+	httpClient *http.Client
 }
 
 // Create an accessor to a odb website in a specific language
 func NewOdb(l Language) *Odb {
-	return &Odb{languageDomainMap[l]}
+	return &Odb{languageDomainMap[l], &http.Client{}}
+}
+
+func NewOdbWithHttpClient(l Language, c *http.Client) *Odb {
+	return &Odb{languageDomainMap[l], c}
+}
+
+func (odb *Odb) ListPost(year, month int) (map[int]string, error) {
+	dayUrlMap := make(map[int]string)
+	url := fmt.Sprintf("http://%s/%d/%02d/", odb.domain, year, month)
+	q, err := fetch(odb.httpClient, url)
+	if err != nil {
+		return nil, fmt.Errorf("Error in crawl list page %s: #v", url, err)
+	}
+	links := q.Find("#wp-calendar a")
+	links.Each(func(i int, link *goquery.Selection) {
+		dayStr := strings.TrimSpace(link.Text())
+		href, _ := link.Attr("href")
+		if n, err := strconv.ParseInt(dayStr, 10, 8); err == nil {
+			dayUrlMap[int(n)] = href
+		}
+	})
+	return dayUrlMap, nil
 }
 
 // Get a post in specific date
 func (odb *Odb) GetPost(year, month, day int) (*Post, error) {
-	q, err := fetch(fmt.Sprintf("http://%s/%d/%02d/%02d/", odb.domain, year, month, day))
+	dayUrlMap, err := odb.ListPost(year, month)
 	if err != nil {
-		return nil, fmt.Errorf("Error in crawl list page: #v", err)
+		return nil, err
 	}
-	link := q.Find(".entry-title > a")
-	url, _ := link.Attr("href")
-	title := link.Text()
-	if url == "" {
-		return nil, errors.New("Unable to find the post url")
+	url, found := dayUrlMap[day]
+	if !found {
+		return nil, fmt.Errorf("cannot find %d/%d/%d", year, month, day)
 	}
-	q, err = fetch(url)
+	q, err := fetch(odb.httpClient, url)
 	if err != nil {
-		return nil, fmt.Errorf("Error in crawl post page: #v", err)
+		return nil, fmt.Errorf("error in crawl post page %s: #v", url, err)
 	}
+	title := q.Find(".entry-title").Text()
 	metaBoxes := q.Find(".entry-content .side-box .meta-box")
 	bibleVerse := metaBoxes.Eq(0).Text()
 	goldenVerse := metaBoxes.Eq(1).Text()
@@ -67,7 +94,8 @@ func (odb *Odb) GetPost(year, month, day int) (*Post, error) {
 	q.Find(".entry-content > p").Each(func(_ int, s *goquery.Selection) {
 		passages = append(passages, s.Text())
 	})
-	poem, _ := q.Find(".entry-content .poem-box").Html()
+	poemText, _ := q.Find(".entry-content .poem-box").Html()
+	poem := splitPassages(poemText)
 	thought := q.Find(".entry-content .thought-box").Text()
 
 	p := &Post{
@@ -77,10 +105,22 @@ func (odb *Odb) GetPost(year, month, day int) (*Post, error) {
 		Url:         url,
 		Title:       title,
 		BibleVerse:  bibleVerse,
+		BibleReference: brave.FindAllReferences(bibleVerse),
 		GoldenVerse: goldenVerse,
 		Passages:    passages,
 		Poem:        poem,
 		Thought:     thought,
 	}
 	return p, nil
+}
+
+var newLine = regexp.MustCompile("[\\n\\r]+|<br\\s*/?>")
+func splitPassages(html string) []string {
+	result := []string{}
+	for _, s := range newLine.Split(html, -1) {
+		if len(s) != 0 {
+			result = append(result, s)
+		}
+	}
+	return result
 }

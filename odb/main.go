@@ -59,5 +59,5 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error in fetch the page: %s", err)
 		os.Exit(1)
 	}
-	fmt.Printf("%+v", p)
+	fmt.Printf("%#v", p)
 }
