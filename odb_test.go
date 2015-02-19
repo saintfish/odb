@@ -45,14 +45,14 @@ func TestToday(t *testing.T) {
 	}
 }
 
-func Test10DaysLater(t *testing.T) {
-	y, m, d := time.Now().AddDate(0, 0, 10).Date()
+func Test7DaysLater(t *testing.T) {
+	y, m, d := time.Now().AddDate(0, 0, 7).Date()
 	for _, l := range []Language{English, SimplifiedChinese, TraditionalChinese} {
 		p := getPost(t, l, y, int(m), d)
 		if p != nil {
 			forDate(t, p, y, int(m), d)
 			if !hasData(t, p) {
-				t.Errorf("Language %v is not unavailable in less than 10 days", l)
+				t.Errorf("Language %v is not unavailable in less than 7 days", l)
 			}
 		}
 	}
