@@ -4,6 +4,7 @@ package odb
 import (
 	"fmt"
 	"github.com/PuerkitoBio/goquery"
+	"github.com/saintfish/bible.go/bible"
 	"github.com/saintfish/brave"
 	"net/http"
 	"regexp"
@@ -17,7 +18,7 @@ type Post struct {
 	Url              string
 	Title            string
 	BibleVerse       string
-	BibleReference   []brave.Reference
+	BibleVerseRef    bible.RefRangeList
 	GoldenVerse      string
 	Passages         []string
 	Poem             []string
@@ -41,7 +42,7 @@ var languageDomainMap = map[Language]string{
 
 // Odb represents an odb website accessor
 type Odb struct {
-	domain string
+	domain     string
 	httpClient *http.Client
 }
 
@@ -98,23 +99,29 @@ func (odb *Odb) GetPost(year, month, day int) (*Post, error) {
 	poem := splitPassages(poemText)
 	thought := q.Find(".entry-content .thought-box").Text()
 
+	refMatch, bibleVerseRef := brave.ParseChineseFull(bibleVerse)
+	if !refMatch {
+		bibleVerseRef = nil
+	}
+
 	p := &Post{
-		Year:        year,
-		Month:       month,
-		Day:         day,
-		Url:         url,
-		Title:       title,
-		BibleVerse:  bibleVerse,
-		BibleReference: brave.FindAllReferences(bibleVerse),
-		GoldenVerse: goldenVerse,
-		Passages:    passages,
-		Poem:        poem,
-		Thought:     thought,
+		Year:          year,
+		Month:         month,
+		Day:           day,
+		Url:           url,
+		Title:         title,
+		BibleVerse:    bibleVerse,
+		BibleVerseRef: bibleVerseRef,
+		GoldenVerse:   goldenVerse,
+		Passages:      passages,
+		Poem:          poem,
+		Thought:       thought,
 	}
 	return p, nil
 }
 
 var newLine = regexp.MustCompile("[\\n\\r]+|<br\\s*/?>")
+
 func splitPassages(html string) []string {
 	result := []string{}
 	for _, s := range newLine.Split(html, -1) {
