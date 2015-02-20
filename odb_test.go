@@ -34,6 +34,14 @@ func hasData(t *testing.T, p *Post) bool {
 	return true
 }
 
+func hasBibleRef(t *testing.T, p *Post) bool {
+	if len(p.BibleVerseRef) == 0 {
+		t.Errorf("Unable to detect verse ref from %s", p.BibleVerse)
+		return false
+	}
+	return true
+}
+
 func TestToday(t *testing.T) {
 	y, m, d := time.Now().Date()
 	for _, l := range []Language{English, SimplifiedChinese, TraditionalChinese} {
@@ -41,6 +49,9 @@ func TestToday(t *testing.T) {
 		if p != nil {
 			forDate(t, p, y, int(m), d)
 			hasData(t, p)
+			if l == SimplifiedChinese || l == TraditionalChinese {
+				hasBibleRef(t, p)
+			}
 		}
 	}
 }

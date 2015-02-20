@@ -36,6 +36,7 @@ const (
 type param struct {
 	domain                        string
 	bibleBoxPrefix, bibleBoxSplit string
+	refParser                     func(string) bible.RefRangeList
 }
 
 var languageParamMap = map[Language]param{
@@ -48,11 +49,13 @@ var languageParamMap = map[Language]param{
 		domain:         "simplified-odb.org",
 		bibleBoxPrefix: "读经: ",
 		bibleBoxSplit:  " | 全年读经: ",
+		refParser:      parseChineseRef,
 	},
 	TraditionalChinese: param{
 		domain:         "traditional-odb.org",
 		bibleBoxPrefix: "讀經: ",
 		bibleBoxSplit:  " | 全年讀經: ",
+		refParser:      parseChineseRef,
 	},
 }
 
@@ -93,23 +96,23 @@ func (odb *Odb) GetPost(year, month, day int) (*Post, error) {
 	poem := splitParagraphs(poemText)
 	thought := text(q.Find(".entry-content .thought-box"))
 
-	refMatch, bibleVerseRef := brave.ParseChineseFull(bibleVerse)
-	if !refMatch {
-		bibleVerseRef = nil
+	var bibleVerseRef bible.RefRangeList
+	if odb.refParser != nil {
+		bibleVerseRef = odb.refParser(bibleVerse)
 	}
 
 	p := &Post{
-		Year:           year,
-		Month:          month,
-		Day:            day,
-		Url:            q.Url.String(),
-		Title:          title,
-		BibleVerse:     bibleVerse,
-		BibleVerseRef:  bibleVerseRef,
-		GoldenVerse:    goldenVerse,
-		Passages:       passages,
-		Poem:           poem,
-		Thought:        thought,
+		Year:          year,
+		Month:         month,
+		Day:           day,
+		Url:           q.Url.String(),
+		Title:         title,
+		BibleVerse:    bibleVerse,
+		BibleVerseRef: bibleVerseRef,
+		GoldenVerse:   goldenVerse,
+		Passages:      passages,
+		Poem:          poem,
+		Thought:       thought,
 	}
 	return p, nil
 }
@@ -153,4 +156,12 @@ func splitParagraphs(html string) []string {
 		}
 	}
 	return result
+}
+
+func parseChineseRef(verse string) bible.RefRangeList {
+	refMatch, verseRef := brave.ParseChineseFull(verse)
+	if !refMatch {
+		return nil
+	}
+	return verseRef
 }
