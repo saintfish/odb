@@ -8,7 +8,6 @@ import (
 	"github.com/saintfish/brave"
 	"net/http"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -34,70 +33,65 @@ const (
 	TraditionalChinese
 )
 
-var languageDomainMap = map[Language]string{
-	English:            "odb.org",
-	SimplifiedChinese:  "simplified-odb.org",
-	TraditionalChinese: "traditional-odb.org",
+type param struct {
+	domain                        string
+	bibleBoxPrefix, bibleBoxSplit string
+}
+
+var languageParamMap = map[Language]param{
+	English: param{
+		domain:         "odb.org",
+		bibleBoxPrefix: "Read: ",
+		bibleBoxSplit:  " | Bible in a Year: ",
+	},
+	SimplifiedChinese: param{
+		domain:         "simplified-odb.org",
+		bibleBoxPrefix: "读经: ",
+		bibleBoxSplit:  " | 全年读经: ",
+	},
+	TraditionalChinese: param{
+		domain:         "traditional-odb.org",
+		bibleBoxPrefix: "讀經: ",
+		bibleBoxSplit:  " | 全年讀經: ",
+	},
 }
 
 // Odb represents an odb website accessor
 type Odb struct {
-	domain     string
+	param
 	httpClient *http.Client
 }
 
 // Create an accessor to a odb website in a specific language
 func NewOdb(l Language) *Odb {
-	return &Odb{languageDomainMap[l], &http.Client{}}
+	return &Odb{languageParamMap[l], &http.Client{}}
 }
 
 func NewOdbWithHttpClient(l Language, c *http.Client) *Odb {
-	return &Odb{languageDomainMap[l], c}
-}
-
-func (odb *Odb) ListPost(year, month int) (map[int]string, error) {
-	dayUrlMap := make(map[int]string)
-	url := fmt.Sprintf("http://%s/%d/%02d/", odb.domain, year, month)
-	q, err := fetch(odb.httpClient, url)
-	if err != nil {
-		return nil, fmt.Errorf("Error in crawl list page %s: #v", url, err)
-	}
-	links := q.Find("#wp-calendar a")
-	links.Each(func(i int, link *goquery.Selection) {
-		dayStr := strings.TrimSpace(link.Text())
-		href, _ := link.Attr("href")
-		if n, err := strconv.ParseInt(dayStr, 10, 8); err == nil {
-			dayUrlMap[int(n)] = href
-		}
-	})
-	return dayUrlMap, nil
+	return &Odb{languageParamMap[l], c}
 }
 
 // Get a post in specific date
 func (odb *Odb) GetPost(year, month, day int) (*Post, error) {
-	dayUrlMap, err := odb.ListPost(year, month)
+	calendarUrl := fmt.Sprintf("http://%s/%4d/%02d/%02d?calendar-redirect=true", odb.domain, year, month, day)
+	q, err := fetch(odb.httpClient, calendarUrl)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error in crawl post page %s: #v", calendarUrl, err)
 	}
-	url, found := dayUrlMap[day]
-	if !found {
-		return nil, fmt.Errorf("cannot find %d/%d/%d", year, month, day)
+	title := text(q.Find("h2.entry-title"))
+	goldenVerse := text(q.Find(".verse-box"))
+	bibleBox := text(q.Find(".passage-box"))
+	bibleVerse := ""
+	if strings.HasPrefix(bibleBox, odb.bibleBoxPrefix) {
+		bibleVerse, _ = token(bibleBox[len(odb.bibleBoxPrefix):], odb.bibleBoxSplit)
 	}
-	q, err := fetch(odb.httpClient, url)
-	if err != nil {
-		return nil, fmt.Errorf("error in crawl post page %s: #v", url, err)
-	}
-	title := q.Find(".entry-title").Text()
-	metaBoxes := q.Find(".entry-content .side-box .meta-box")
-	bibleVerse := metaBoxes.Eq(0).Text()
-	goldenVerse := metaBoxes.Eq(1).Text()
 	passages := []string{}
-	q.Find(".entry-content > p").Each(func(_ int, s *goquery.Selection) {
-		passages = append(passages, s.Text())
+	q.Find(".post-content > p").Each(func(_ int, s *goquery.Selection) {
+		passages = append(passages, text(s))
 	})
 	poemText, _ := q.Find(".entry-content .poem-box").Html()
-	poem := splitPassages(poemText)
-	thought := q.Find(".entry-content .thought-box").Text()
+	poem := splitParagraphs(poemText)
+	thought := text(q.Find(".entry-content .thought-box"))
 
 	refMatch, bibleVerseRef := brave.ParseChineseFull(bibleVerse)
 	if !refMatch {
@@ -105,24 +99,53 @@ func (odb *Odb) GetPost(year, month, day int) (*Post, error) {
 	}
 
 	p := &Post{
-		Year:          year,
-		Month:         month,
-		Day:           day,
-		Url:           url,
-		Title:         title,
-		BibleVerse:    bibleVerse,
-		BibleVerseRef: bibleVerseRef,
-		GoldenVerse:   goldenVerse,
-		Passages:      passages,
-		Poem:          poem,
-		Thought:       thought,
+		Year:           year,
+		Month:          month,
+		Day:            day,
+		Url:            q.Url.String(),
+		Title:          title,
+		BibleVerse:     bibleVerse,
+		BibleVerseRef:  bibleVerseRef,
+		GoldenVerse:    goldenVerse,
+		Passages:       passages,
+		Poem:           poem,
+		Thought:        thought,
 	}
 	return p, nil
 }
 
-var newLine = regexp.MustCompile("[\\n\\r]+|<br\\s*/?>")
+func fetch(c *http.Client, url string) (*goquery.Document, error) {
+	res, err := c.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		return nil, fmt.Errorf("Unsuccessful status code %d", res.StatusCode)
+	}
+	q, err := goquery.NewDocumentFromReader(res.Body)
+	if err != nil {
+		return nil, err
+	}
+	q.Url = res.Request.URL
+	return q, nil
+}
 
-func splitPassages(html string) []string {
+func text(q *goquery.Selection) string {
+	return strings.Trim(q.Text(), "\u2029 \n\t")
+}
+
+func token(s, sep string) (token, remainder string) {
+	split := strings.SplitN(s, sep, 2)
+	if len(split) < 2 {
+		return "", split[0]
+	}
+	return split[0], split[1]
+}
+
+var newLine = regexp.MustCompile("((\\s|\u2029)*<br\\s*/?>(\\s|\u2029)*)+")
+
+func splitParagraphs(html string) []string {
 	result := []string{}
 	for _, s := range newLine.Split(html, -1) {
 		if len(s) != 0 {
