@@ -48,13 +48,13 @@ var languageParamMap = map[Language]param{
 	SimplifiedChinese: param{
 		domain:         "simplified-odb.org",
 		bibleBoxPrefix: "读经: ",
-		bibleBoxSplit:  " | 全年读经: ",
+		bibleBoxSplit:  " | 全年读经进度: ",
 		refParser:      parseChineseRef,
 	},
 	TraditionalChinese: param{
 		domain:         "traditional-odb.org",
 		bibleBoxPrefix: "讀經: ",
-		bibleBoxSplit:  " | 全年讀經: ",
+		bibleBoxSplit:  " | 全年讀經進度: ",
 		refParser:      parseChineseRef,
 	},
 }
@@ -87,6 +87,7 @@ func (odb *Odb) GetPost(year, month, day int) (*Post, error) {
 	bibleVerse := ""
 	if strings.HasPrefix(bibleBox, odb.bibleBoxPrefix) {
 		bibleVerse, _ = token(bibleBox[len(odb.bibleBoxPrefix):], odb.bibleBoxSplit)
+		bibleVerse = strings.Trim(bibleVerse, "\u2029 \n\t")
 	}
 	passages := []string{}
 	q.Find(".post-content > p").Each(func(_ int, s *goquery.Selection) {
@@ -115,6 +116,13 @@ func (odb *Odb) GetPost(year, month, day int) (*Post, error) {
 		Thought:       thought,
 	}
 	return p, nil
+}
+
+func (odb *Odb) SetBibleVerse(p *Post, bibleVerse string) {
+	p.BibleVerse = bibleVerse
+	if odb.refParser != nil {
+		p.BibleVerseRef = odb.refParser(bibleVerse)
+	}
 }
 
 func fetch(c *http.Client, url string) (*goquery.Document, error) {
